@@ -1,0 +1,226 @@
+import PyPDF2
+import os
+import re
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.header import Header
+import datetime
+
+def sanitize_filename(filename):
+    """
+    Sanitize filename by removing invalid characters and limiting length.
+    """
+    # Remove invalid characters for filenames
+    sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    # Remove extra whitespace and replace with underscores
+    sanitized = re.sub(r'\s+', '_', sanitized.strip())
+    # Limit length to avoid filesystem issues
+    if len(sanitized) > 100:
+        sanitized = sanitized[:100]
+    return sanitized
+
+def extract_pdf_metadata_and_bookmarks(pdf_path):
+    """
+    Extract and display PDF metadata and bookmarks.
+    """
+    try:
+        # Open the PDF file
+        pdf = PyPDF2.PdfReader(pdf_path)
+
+        # Extract metadata
+        metadata = pdf.metadata
+        print("Metadata:")
+        if metadata:
+            for key, value in metadata.items():
+                print(f"{key}: {value}")
+        else:
+            print("No metadata found.")
+
+        # Extract bookmarks (outline)
+        print("\nBookmarks (Outline):")
+        bookmarks = pdf.outline
+        if bookmarks:
+            def print_bookmarks(outline, level=0):
+                """Recursively print bookmarks with indentation for hierarchy."""
+                for item in outline:
+                    if isinstance(item, dict):
+                        # Extract title and page number
+                        title = item.get('/Title', 'No Title')
+                        page = item.get('/Page', 'No Page')
+                        print("  " * level + f"- {title} (Page: {page})")
+                    elif isinstance(item, list):
+                        # Recursively process nested bookmarks
+                        print_bookmarks(item, level + 1)
+
+            print_bookmarks(bookmarks)
+        else:
+            print("No bookmarks found.")
+
+        return bookmarks
+
+    except Exception as e:
+        print(f"Error extracting metadata: {e}")
+        return None
+
+def get_bookmark_page_mapping(bookmarks):
+    """
+    Create a mapping of page numbers to bookmark titles.
+    """
+    page_to_bookmark = {}
+    
+    def process_bookmarks(outline, level=0):
+        for item in outline:
+            if isinstance(item, dict):
+                title = item.get('/Title', 'No Title')
+                # Get the page reference and resolve it to page number
+                page_ref = item.get('/Page')
+                if page_ref:
+                    try:
+                        # If page_ref is a page object, get its number
+                        if hasattr(page_ref, 'idnum'):
+                            # Find the page number from the page reference
+                            page_num = None
+                            # This is a simplified approach - you might need to adjust based on your PDF structure
+                            page_to_bookmark[len(page_to_bookmark)] = title
+                        else:
+                            # Direct page number
+                            page_to_bookmark[page_ref] = title
+                    except:
+                        # If we can't resolve the page, use the title anyway
+                        page_to_bookmark[len(page_to_bookmark)] = title
+            elif isinstance(item, list):
+                process_bookmarks(item, level + 1)
+    
+    if bookmarks:
+        process_bookmarks(bookmarks)
+    
+    return page_to_bookmark
+
+def split_pdf_with_bookmarks(pdf_path, output_dir):
+    """
+    Split PDF into individual pages using bookmark titles as filenames.
+    Also create EML files with the page content.
+    """
+    # Create output directory if it doesn't exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    try:
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            num_pages = len(pdf_reader.pages)
+            
+            # Extract bookmarks and create page mapping
+            bookmarks = pdf_reader.outline
+            page_to_bookmark = {}
+            
+            # Create a more robust bookmark to page mapping
+            if bookmarks:
+                def extract_bookmark_pages(outline, reader):
+                    bookmark_info = []
+                    
+                    def process_outline(items):
+                        for item in items:
+                            if isinstance(item, dict):
+                                title = item.get('/Title', 'No Title')
+                                # Try to get page number from bookmark
+                                if '/Page' in item:
+                                    page_ref = item['/Page']
+                                    try:
+                                        # Resolve page reference to page number
+                                        page_num = reader.get_page_number(page_ref)
+                                        bookmark_info.append((page_num, title))
+                                    except:
+                                        # If resolution fails, we'll handle it later
+                                        pass
+                            elif isinstance(item, list):
+                                process_outline(item)
+                    
+                    process_outline(outline)
+                    return bookmark_info
+                
+                try:
+                    bookmark_pages = extract_bookmark_pages(bookmarks, pdf_reader)
+                    for page_num, title in bookmark_pages:
+                        page_to_bookmark[page_num] = title
+                except:
+                    # If bookmark extraction fails, we'll use default naming
+                    pass
+            
+            # Process each page
+            for page_num in range(num_pages):
+                # Get bookmark title for this page, or use default
+                if page_num in page_to_bookmark:
+                    base_filename = sanitize_filename(page_to_bookmark[page_num])
+                else:
+                    base_filename = f"page_{page_num + 1}"
+                
+                # Extract text from the page for EML
+                page = pdf_reader.pages[page_num]
+                text = page.extract_text() or f"Page {page_num + 1} (No text extracted)"
+                
+                # Create email message for EML
+                msg = MIMEMultipart()
+                subject = f'{base_filename} from {os.path.basename(pdf_path)}'
+                msg['Subject'] = Header(subject, 'utf-8')
+                msg['From'] = 'sender@example.com'
+                msg['To'] = 'recipient@example.com'
+                msg['Date'] = datetime.datetime.now().strftime('%a, %d %b %Y %H:%M:%S %z')
+                
+                # Attach text content to EML
+                text_part = MIMEText(text, 'plain', 'utf-8')
+                msg.attach(text_part)
+                
+                # Save EML file
+                eml_filename = os.path.join(output_dir, f'{base_filename}.eml')
+                with open(eml_filename, 'w', encoding='utf-8') as eml_file:
+                    eml_file.write(msg.as_string())
+                
+                # Create single-page PDF
+                pdf_writer = PyPDF2.PdfWriter()
+                pdf_writer.add_page(page)
+                
+                # Save PDF file
+                pdf_filename = os.path.join(output_dir, f'{base_filename}.pdf')
+                with open(pdf_filename, 'wb') as pdf_file:
+                    pdf_writer.write(pdf_file)
+                
+                print(f'Created {pdf_filename} and {eml_filename}')
+                
+    except Exception as e:
+        print(f'Error processing PDF: {str(e)}')
+
+def main():
+    # Get PDF file path from user or use default
+    pdf_path = input("Enter PDF file path (or press Enter for 'sample.pdf'): ").strip()
+    if not pdf_path:
+        pdf_path = 'sample.pdf'
+    
+    # Get output directory from user or use default
+    output_dir = input("Enter output directory (or press Enter for 'output'): ").strip()
+    if not output_dir:
+        output_dir = 'output'
+    
+    # Check if PDF file exists
+    if not os.path.exists(pdf_path):
+        print(f"Error: PDF file '{pdf_path}' not found.")
+        return
+    
+    print(f"\nProcessing PDF: {pdf_path}")
+    print(f"Output directory: {output_dir}")
+    print("-" * 50)
+    
+    # First, extract and display metadata and bookmarks
+    print("Extracting metadata and bookmarks...")
+    extract_pdf_metadata_and_bookmarks(pdf_path)
+    
+    print("\n" + "-" * 50)
+    print("Splitting PDF into individual pages...")
+    
+    # Split PDF using bookmark titles as filenames
+    split_pdf_with_bookmarks(pdf_path, output_dir)
+    
+    print(f"\nProcessing complete! Check the '{output_dir}' directory for output files.")
+
+if __name__ == '__main__':
+    main()
