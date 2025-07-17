@@ -1,0 +1,42 @@
+from PyPDF2 import PdfReader
+
+def extract_pdf_metadata_and_bookmarks(pdf_path):
+    try:
+        # Open the PDF file
+        pdf = PdfReader(pdf_path)
+
+        # Extract metadata
+        metadata = pdf.metadata
+        print("Metadata:")
+        if metadata:
+            for key, value in metadata.items():
+                print(f"{key}: {value}")
+        else:
+            print("No metadata found.")
+
+        # Extract bookmarks (outline)
+        print("\nBookmarks (Outline):")
+        bookmarks = pdf.outline
+        if bookmarks:
+            def print_bookmarks(outline, level=0):
+                """Recursively print bookmarks with indentation for hierarchy."""
+                for item in outline:
+                    if isinstance(item, dict):
+                        # Extract title and page number
+                        title = item.get('/Title', 'No Title')
+                        page = item.get('/Page', 'No Page')
+                        print("  " * level + f"- {title} (Page: {page})")
+                    elif isinstance(item, list):
+                        # Recursively process nested bookmarks
+                        print_bookmarks(item, level + 1)
+
+            print_bookmarks(bookmarks)
+        else:
+            print("No bookmarks found.")
+
+    except Exception as e:
+        print(f"Error: {e}")
+
+# Example usage
+pdf_path = "sample.pdf"  # Replace with your PDF file path
+extract_pdf_metadata_and_bookmarks(pdf_path)
