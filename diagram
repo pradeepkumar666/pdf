@@ -1,0 +1,53 @@
++-------------------+
+|   User Input      |
+|-------------------|
+| - PDF file path   |
+| - Output dir      |
++---------+---------+
+          |
+          v
++---------------------------+
+|   Main Function           |
+|---------------------------|
+| - Calls metadata/bookmark |
+|   extraction              |
+| - Calls PDF splitting     |
++---------+-----------------+
+          | 
+          v
++-------------------------------+
+| Extract Metadata & Bookmarks  |
+|-------------------------------|
+| - Uses PyPDF2.PdfReader       |
+| - Extracts metadata           |
+| - Extracts outline/bookmarks  |
++-------------------------------+
+          |
+          v
++-------------------------------+
+| Get Bookmark-Page Mapping     |
+|-------------------------------|
+| - Recursively traverses       |
+|   outline/bookmarks           |
+| - Maps page numbers to titles |
++-------------------------------+
+          |
+          v
++-------------------------------+
+| Split PDF by Page             |
+|-------------------------------|
+| - For each page:              |
+|   - Get bookmark title        |
+|   - Sanitize filename         |
+|   - Extract text              |
+|   - Create EML file           |
+|   - Create single-page PDF    |
++-------------------------------+
+          |
+          v
++-------------------+
+| Output Files      |
+|-------------------|
+| - .pdf per page   |
+| - .eml per page   |
++-------------------+
