@@ -1,0 +1,183 @@
+import PyPDF2
+import re
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from email.utils import formatdate
+from datetime import datetime
+import os
+
+def extract_text_from_pdf(pdf_path):
+    """Extract text content from PDF file"""
+    try:
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        print(f"Error reading PDF: {e}")
+        return None
+
+def parse_email_content(text):
+    """Parse the extracted text to identify email components"""
+    email_data = {}
+    
+    # Extract FROM field
+    from_match = re.search(r'FROM:\s*(.+)', text)
+    if from_match:
+        email_data['from'] = from_match.group(1).strip()
+    
+    # Extract TO field
+    to_match = re.search(r'TO:\s*(.+)', text)
+    if to_match:
+        email_data['to'] = to_match.group(1).strip()
+    
+    # Extract CC field
+    cc_match = re.search(r'CC:\s*(.+)', text)
+    if cc_match:
+        email_data['cc'] = cc_match.group(1).strip()
+    
+    # Extract SUBJECT field
+    subject_match = re.search(r'SUBJECT:\s*(.+)', text)
+    if subject_match:
+        email_data['subject'] = subject_match.group(1).strip()
+    
+    # Extract SENT date
+    sent_match = re.search(r'SENT:\s*(.+)', text)
+    if sent_match:
+        email_data['date'] = sent_match.group(1).strip()
+    
+    # Extract ATTACHMENTS
+    attachments_match = re.search(r'ATTACHMENTS:\s*(.+)', text)
+    if attachments_match:
+        email_data['attachments'] = attachments_match.group(1).strip()
+    
+    # Extract email body (everything after the header fields and before signature)
+    # Look for the main message content
+    body_start = text.find("Sam,")
+    if body_start == -1:
+        # If "Sam," not found, look for other indicators
+        body_start = text.find("This message is from")
+    
+    body_end = text.find("Thank you,")
+    if body_end == -1:
+        body_end = len(text)
+    
+    if body_start != -1:
+        email_data['body'] = text[body_start:body_end].strip()
+    else:
+        # Fallback: try to extract everything after the header
+        lines = text.split('\n')
+        body_lines = []
+        header_done = False
+        for line in lines:
+            if header_done:
+                body_lines.append(line)
+            elif line.strip() == "" or "=" * 10 in line:
+                header_done = True
+        email_data['body'] = '\n'.join(body_lines).strip()
+    
+    return email_data
+
+def create_eml_file(email_data, output_path):
+    """Create an EML file from parsed email data"""
+    try:
+        # Create the email message
+        msg = MIMEMultipart()
+        
+        # Set headers
+        msg['From'] = email_data.get('from', '')
+        msg['To'] = email_data.get('to', '')
+        if 'cc' in email_data:
+            msg['Cc'] = email_data['cc']
+        msg['Subject'] = email_data.get('subject', 'No Subject')
+        
+        # Handle date - try to parse or use current date
+        if 'date' in email_data:
+            try:
+                # Try to parse the date string
+                date_str = email_data['date']
+                # Remove timezone abbreviation if present
+                date_str = re.sub(r'\s+[A-Z]{3,4}$', '', date_str)
+                parsed_date = datetime.strptime(date_str, '%A, %B %d, %Y %I:%M:%S %p Eastern Standard Time')
+                msg['Date'] = formatdate(parsed_date.timestamp(), localtime=True)
+            except:
+                # If parsing fails, use current date
+                msg['Date'] = formatdate(localtime=True)
+        else:
+            msg['Date'] = formatdate(localtime=True)
+        
+        # Add body
+        body_text = email_data.get('body', '')
+        msg.attach(MIMEText(body_text, 'plain'))
+        
+        # Add note about attachments if mentioned
+        if 'attachments' in email_data:
+            attachment_note = f"\n\n[Original email contained attachment: {email_data['attachments']}]"
+            msg.attach(MIMEText(attachment_note, 'plain'))
+        
+        # Write to EML file
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(msg.as_string())
+        
+        print(f"EML file created successfully: {output_path}")
+        return True
+        
+    except Exception as e:
+        print(f"Error creating EML file: {e}")
+        return False
+
+def pdf_to_eml(pdf_path, eml_path=None):
+    """Main function to convert PDF email to EML format"""
+    
+    # Generate output filename if not provided
+    if eml_path is None:
+        base_name = os.path.splitext(pdf_path)[0]
+        eml_path = f"{base_name}.eml"
+    
+    print(f"Extracting text from PDF: {pdf_path}")
+    
+    # Extract text from PDF
+    text = extract_text_from_pdf(pdf_path)
+    if not text:
+        print("Failed to extract text from PDF")
+        return False
+    
+    print("Parsing email content...")
+    
+    # Parse email content
+    email_data = parse_email_content(text)
+    
+    # Display parsed data for verification
+    print("\nParsed Email Data:")
+    print("-" * 40)
+    for key, value in email_data.items():
+        if key == 'body':
+            print(f"{key.upper()}: {value[:100]}..." if len(value) > 100 else f"{key.upper()}: {value}")
+        else:
+            print(f"{key.upper()}: {value}")
+    
+    print(f"\nCreating EML file: {eml_path}")
+    
+    # Create EML file
+    success = create_eml_file(email_data, eml_path)
+    
+    if success:
+        print(f"\nConversion completed successfully!")
+        print(f"EML file saved as: {eml_path}")
+    
+    return success
+
+# Example usage
+if __name__ == "__main__":
+    # Replace with your PDF file path
+    pdf_file_path = "email.pdf"  # Change this to your PDF file path
+    eml_file_path = "extracted_email.eml"  # Output EML file path
+    
+    # Convert PDF to EML
+    pdf_to_eml(pdf_file_path, eml_file_path)
+    
+    # Alternative: Let the function auto-generate the output filename
+    # pdf_to_eml(pdf_file_path)
