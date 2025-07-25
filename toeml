@@ -54,29 +54,54 @@ def parse_email_content(text):
     if attachments_match:
         email_data['attachments'] = attachments_match.group(1).strip()
     
-    # Extract email body (everything after the header fields and before signature)
+    # Extract email body (everything after the header fields, including signature)
     # Look for the main message content
     body_start = text.find("Sam,")
     if body_start == -1:
         # If "Sam," not found, look for other indicators
         body_start = text.find("This message is from")
     
-    body_end = text.find("Thank you,")
-    if body_end == -1:
-        body_end = len(text)
+    # Find the end of the email body - look for table headers or insurance info
+    # that typically appears after the signature
+    body_end_markers = [
+        "Named Insured",
+        "Mailing Address", 
+        "Physical Address",
+        "Effective Date",
+        "LOB/Coverage Requested"
+    ]
+    
+    body_end = len(text)  # Default to end of text
+    for marker in body_end_markers:
+        marker_pos = text.find(marker)
+        if marker_pos != -1 and marker_pos < body_end:
+            body_end = marker_pos
     
     if body_start != -1:
-        email_data['body'] = text[body_start:body_end].strip()
+        email_body = text[body_start:body_end].strip()
+        # Clean up any excessive whitespace or formatting artifacts
+        email_body = re.sub(r'\n\s*\n\s*\n', '\n\n', email_body)  # Replace multiple newlines with double newlines
+        email_data['body'] = email_body
     else:
         # Fallback: try to extract everything after the header
         lines = text.split('\n')
         body_lines = []
         header_done = False
+        in_table = False
+        
         for line in lines:
-            if header_done:
+            # Skip table data at the end
+            if any(marker in line for marker in body_end_markers):
+                in_table = True
+            
+            if in_table:
+                continue
+                
+            if header_done and not in_table:
                 body_lines.append(line)
             elif line.strip() == "" or "=" * 10 in line:
                 header_done = True
+                
         email_data['body'] = '\n'.join(body_lines).strip()
     
     return email_data
