@@ -1,0 +1,113 @@
+import fitz  # PyMuPDF
+import os
+import datetime
+
+def print_pdf_attributes(pdf_path):
+    try:
+        # Open the PDF
+        doc = fitz.open(pdf_path)
+        
+        # Document-level attributes
+        print("=== Document-Level Attributes ===")
+        print(f"File Path: {pdf_path}")
+        print(f"File Size: {os.path.getsize(pdf_path)} bytes")
+        print(f"PDF Version: {doc.pdf_version()}")
+        print(f"Page Count: {doc.page_count}")
+        print(f"Is Encrypted: {doc.is_encrypted}")
+        print(f"Permissions: {doc.permissions}")
+        print(f"Has Form Fields: {doc.is_form_pdf}")
+        print(f"Is PDF: {doc.is_pdf}")
+        print(f"Needs Password: {doc.needs_pass}")
+        print(f"XMP Metadata: {doc.xmp_metadata() or 'None'}")
+
+        # Metadata
+        print("\n=== Metadata ===")
+        metadata = doc.metadata
+        for key, value in metadata.items():
+            print(f"{key}: {value if value else 'Not specified'}")
+
+        # Bookmarks (Table of Contents)
+        print("\n=== Bookmarks (Table of Contents) ===")
+        def print_outline(outline, level=0):
+            while outline:
+                print(f"{'  ' * level}Title: {outline.title}, Page: {outline.page + 1 if outline.page >= 0 else 'N/A'}, URI: {outline.uri or 'None'}")
+                if outline.down:
+                    print_outline(outline.down, level + 1)
+                outline = outline.next
+        if doc.outline:
+            print_outline(doc.outline)
+        else:
+            print("No bookmarks found.")
+
+        # Embedded Files
+        print("\n=== Embedded Files ===")
+        embedded_files = doc.embedded_file_names()
+        if embedded_files:
+            for file_name in embedded_files:
+                file_info = doc.embedded_file_info(file_name)
+                print(f"Name: {file_name}, Size: {file_info.get('size', 'Unknown')} bytes, Description: {file_info.get('desc', 'None')}")
+        else:
+            print("No embedded files found.")
+
+        # Form Fields (if any)
+        print("\n=== Form Fields ===")
+        if doc.is_form_pdf:
+            for field in doc.get_form_fields():
+                print(f"Field Name: {field[0]}, Value: {field[1] or 'None'}, Type: {field[2] or 'Unknown'}")
+        else:
+            print("No form fields found.")
+
+        # Page-level attributes
+        print("\n=== Page-Level Attributes ===")
+        for page_num in range(min(doc.page_count, 3)):  # Limit to first 3 pages for brevity
+            page = doc.load_page(page_num)
+            print(f"\n--- Page {page_num + 1} ---")
+            print(f"Dimensions: {page.rect}")
+            print(f"MediaBox: {page.mediabox}")
+            print(f"CropBox: {page.cropbox}")
+            print(f"Rotation: {page.rotation} degrees")
+            
+            # Text content (first 100 characters)
+            text = page.get_text("text")
+            print(f"Text (first 100 chars): {text[:100] + '...' if text else 'None'}")
+            
+            # Images
+            images = page.get_images(full=True)
+            print(f"Images: {len(images)} found")
+            for img in images[:3]:  # Limit to 3 images per page
+                print(f"  Image: {img}")
+            
+            # Links
+            links = page.get_links()
+            print(f"Links: {len(links)} found")
+            for link in links:
+                print(f"  Link: Type={link.get('kind', 'Unknown')}, URI={link.get('uri', 'None')}, To={link.get('to', 'None')}")
+
+            # Annotations
+            annots = list(page.annots())
+            print(f"Annotations: {len(annots)} found")
+            for annot in annots[:3]:  # Limit to 3 annotations
+                print(f"  Annotation: Type={annot.type[1] or 'Unknown'}, Info={annot.info or 'None'}")
+            
+            # Fonts
+            fonts = page.get_fonts()
+            print(f"Fonts: {len(fonts)} found")
+            for font in fonts[:3]:  # Limit to 3 fonts
+                print(f"  Font: {font}")
+
+        # Document resources
+        print("\n=== Document Resources ===")
+        resources = doc.get_resources()
+        print(f"Resources: {resources or 'None'}")
+
+        # Close the document
+        doc.close()
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
+# Example usage
+if __name__ == "__main__":
+    pdf_path = "example.pdf"
+    print(f"\nProcessing PDF at {datetime.datetime.now()}")
+    print_pdf_attributes(pdf_path)
