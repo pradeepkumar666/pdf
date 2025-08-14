@@ -1,0 +1,21 @@
+# 1. Crimes & Violence
+crimes_and_violence_keywords = [
+    "Rape", "Raped", "Rob", "Robbed", "Sex", "Sexual", "Shoot", "Shot",
+    "Stolen", "Struck", "Suffocate", "Suffocated", "Threat", "Threatened",
+    "Torment", "Violent", "Weapon", "Wounded"
+]
+
+# 2. Hazards & Disasters
+hazards_and_disasters_keywords = [
+    "Mold", "Natural Disaster", "Overheat", "Water Damage"
+]
+
+# 3. Harm & Distress
+harm_and_distress_keywords = [
+    "Pain", "Suffering", "Warn", "Warned", "Victim"
+]
+
+# 4. Safety & Legal Compliance
+safety_and_compliance_keywords = [
+    "Overserved", "Saved", "Unlicensed"
+]
