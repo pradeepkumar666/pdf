@@ -1,0 +1,46 @@
+import os
+import sys
+import subprocess
+
+PKG = "requests==2.31.0"
+TMP_DIR = "/tmp/python_lib"
+
+# This code runs at cold start
+def ensure_pkg():
+    # Only install if not already installed
+    try:
+        import requests
+        return
+    except ImportError:
+        pass
+
+    # Make sure target dir exists
+    os.makedirs(TMP_DIR, exist_ok=True)
+
+    # Install the package into TMP_DIR
+    # Using --no-cache-dir to reduce size
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install",
+        PKG,
+        "-t", TMP_DIR,
+        "--no-cache-dir",
+        "--only-binary", ":all:"   # try to use wheels to avoid building from source
+    ])
+
+    # Add TMP_DIR and its packages to the front of sys.path
+    sys.path.insert(0, TMP_DIR)
+
+# Call at cold start
+ensure_pkg()
+
+def lambda_handler(event, context):
+    # Now you can import requests
+    import requests
+
+    resp = requests.get("https://httpbin.org/get")
+    data = resp.json()
+
+    return {
+        "statusCode": 200,
+        "body": data
+    }
