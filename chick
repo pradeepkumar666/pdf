@@ -1,0 +1,149 @@
+# pip install openpyxl
+
+from openpyxl import load_workbook, Workbook
+from openpyxl.utils import column_index_from_string
+from urllib.parse import urlparse, parse_qs, unquote
+import re
+
+# ========= CONFIG =========
+INPUT_XLSX   = "input.xlsx"          # your input file
+SHEET_NAME   = None                  # e.g. "Sheet1"; or None for the active sheet
+LINK_COLUMN  = "A"                   # column containing the hyperlink (e.g., "A")
+HAS_HEADER   = True                  # True if first row has headers
+OUTPUT_XLSX  = "sorted_output.xlsx"  # new output file
+OUTPUT_SHEET = "SortedByDomain"      # new sheet name
+# ==========================
+
+
+def unwrap_defense_url(url: str) -> str:
+    """
+    Unwrap common email security redirectors to the original URL.
+    Supports:
+      - Proofpoint URL Defense v2: urldefense.proofpoint.com/v2/... ?u=<encoded>
+      - Proofpoint / Cisco style v3: urldefense.com/v3/__<URL>__;<sig>
+      - Microsoft Safe Links: *.safelinks.protection.outlook.com/?url=<encoded>
+      - Google redirect: www.google.com/url?q=<encoded>
+    Returns the best-effort unwrapped URL (or the input if not wrapped).
+    """
+    if not url:
+        return url
+
+    u = url.strip()
+
+    # --- Proofpoint v3 / urldefense.com with double-underscore fences ---
+    # Example: https://urldefense.com/v3/__https://example.com/path?a=b__;!!...
+    if "urldefense.com" in u:
+        m = re.search(r"/__([^_].*?)__;", u)  # capture between "__" and "__;"
+        if m:
+            return unquote(m.group(1))
+
+    # --- Proofpoint v2 ---
+    # Example: https://urldefense.proofpoint.com/v2/url?u=<ENCODED>&...
+    if "urldefense.proofpoint.com" in u:
+        try:
+            qs = parse_qs(urlparse(u).query)
+            if "u" in qs and qs["u"]:
+                return unquote(qs["u"][0])
+        except Exception:
+            pass
+
+    # --- Microsoft Safe Links ---
+    # Example: https://*.safelinks.protection.outlook.com/?url=<ENCODED>&...
+    if "safelinks.protection.outlook.com" in u:
+        try:
+            qs = parse_qs(urlparse(u).query)
+            if "url" in qs and qs["url"]:
+                return unquote(qs["url"][0])
+        except Exception:
+            pass
+
+    # --- Google redirector ---
+    if "www.google.com/url" in u:
+        try:
+            qs = parse_qs(urlparse(u).query)
+            if "q" in qs and qs["q"]:
+                return unquote(qs["q"][0])
+        except Exception:
+            pass
+
+    return u
+
+
+def to_domain(url: str) -> str:
+    """Parse a URL to a clean domain (final target if wrapped)."""
+    if not url:
+        return ""
+    final_url = unwrap_defense_url(url)
+
+    # Add scheme if missing to help urlparse
+    if not final_url.lower().startswith(("http://", "https://")):
+        final_url = "http://" + final_url
+
+    try:
+        netloc = urlparse(final_url).netloc or ""
+    except Exception:
+        return ""
+
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return netloc.lower()
+
+
+def extract_url_from_cell(cell) -> str:
+    """Get a usable URL string from a cell that may have an embedded hyperlink or plain text."""
+    if cell.hyperlink and getattr(cell.hyperlink, "target", None):
+        return cell.hyperlink.target
+    val = cell.value
+    if isinstance(val, str) and (("http" in val.lower()) or ("www." in val.lower())):
+        return val.strip()
+    return ""
+
+
+def main():
+    wb = load_workbook(INPUT_XLSX)
+    ws = wb[SHEET_NAME] if SHEET_NAME else wb.active
+    link_col_idx = column_index_from_string(LINK_COLUMN)
+
+    start_row = 2 if HAS_HEADER else 1
+    rows_data = []
+
+    # Collect rows with domain key
+    for r_idx, row in enumerate(ws.iter_rows(min_row=start_row, values_only=False), start=start_row):
+        cells = list(row)
+        key_cell = cells[link_col_idx - 1]
+        raw_url = extract_url_from_cell(key_cell)
+        domain = to_domain(raw_url)
+        values = [c.value for c in cells]
+        rows_data.append((domain, r_idx, values, raw_url))  # keep raw_url to reapply hyperlink if desired
+
+    # Sort by final domain (stable by original row index)
+    rows_data.sort(key=lambda t: (t[0], t[1]))
+
+    # Create new workbook for output
+    out_wb = Workbook()
+    out_ws = out_wb.active
+    out_ws.title = OUTPUT_SHEET
+
+    # Header
+    if HAS_HEADER:
+        header_vals = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=False))]
+        header_vals.append("Domain")
+        out_ws.append(header_vals)
+
+    # Data + Domain column
+    for domain, _, values, raw_url in rows_data:
+        out_ws.append(values + [domain])
+
+        # Re-apply a clean hyperlink to the link column if we have one
+        if raw_url:
+            final_url = unwrap_defense_url(raw_url)
+            cell = out_ws.cell(row=out_ws.max_row, column=link_col_idx)
+            cell.hyperlink = final_url
+            cell.style = "Hyperlink"
+
+    out_wb.save(OUTPUT_XLSX)
+    print(f"✅ Done. Saved '{OUTPUT_XLSX}' with rows sorted by FINAL destination domain and a visible 'Domain' column.")
+
+
+if __name__ == "__main__":
+    main()
