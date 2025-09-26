@@ -1,0 +1,92 @@
+# pip install openpyxl
+
+from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
+from urllib.parse import urlparse
+
+# ========= CONFIG =========
+INPUT_XLSX   = "input.xlsx"     # your file
+SHEET_NAME   = None             # e.g. "Sheet1"; or None for active sheet
+LINK_COLUMN  = "A"              # column that contains the hyperlink per row (e.g., "A")
+HAS_HEADER   = True             # True if first row is headers
+OUTPUT_SHEET = "SortedByDomain" # new sheet to create
+# ==========================
+
+def extract_domain_from_cell(cell):
+    """
+    Return the domain for a cell that may contain an embedded Excel hyperlink
+    or a plain URL string. Returns '' if not found.
+    """
+    # 1) Embedded hyperlink (clickable text)
+    url = None
+    if cell.hyperlink and getattr(cell.hyperlink, "target", None):
+        url = cell.hyperlink.target
+    # 2) Fallback: plain text that looks like a URL
+    elif isinstance(cell.value, str) and ("http" in cell.value.lower() or "www." in cell.value.lower()):
+        url = cell.value.strip()
+
+    if not url:
+        return ""
+
+    # Normalize and parse
+    u = url.strip()
+    if not u.lower().startswith(("http://", "https://")):
+        u = "http://" + u  # helps urlparse handle "www.example.com/..."
+    try:
+        netloc = urlparse(u).netloc or ""
+    except Exception:
+        return ""
+
+    # Tidy: remove "www."
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return netloc.lower()
+
+def main():
+    wb = load_workbook(INPUT_XLSX)
+    ws = wb[SHEET_NAME] if SHEET_NAME else wb.active
+
+    link_col_idx = column_index_from_string(LINK_COLUMN)
+
+    # Collect rows (keep original order index as tie-breaker)
+    start_row = 2 if HAS_HEADER else 1
+    rows_data = []
+    for r_idx, row in enumerate(ws.iter_rows(min_row=start_row, values_only=False), start=start_row):
+        cells = list(row)
+        key_cell = cells[link_col_idx - 1]
+        domain = extract_domain_from_cell(key_cell)
+        values = [c.value for c in cells]
+        # Keep URL for restoring hyperlink on the output sheet (optional but nice)
+        url = None
+        if key_cell.hyperlink and getattr(key_cell.hyperlink, "target", None):
+            url = key_cell.hyperlink.target
+        elif isinstance(key_cell.value, str) and ("http" in key_cell.value.lower() or "www." in key_cell.value.lower()):
+            url = key_cell.value.strip()
+        rows_data.append((domain, r_idx, values, url))
+
+    # Sort by domain, stable on original order
+    rows_data.sort(key=lambda t: (t[0], t[1]))
+
+    # Create/replace output sheet
+    if OUTPUT_SHEET in wb.sheetnames:
+        del wb[OUTPUT_SHEET]
+    out = wb.create_sheet(OUTPUT_SHEET)
+
+    # Write header
+    if HAS_HEADER:
+        header_vals = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=False))]
+        out.append(header_vals)
+
+    # Write sorted rows (re-apply hyperlink to the link column when available)
+    for domain, _, values, url in rows_data:
+        out.append(values)
+        if url:
+            cell = out.cell(row=out.max_row, column=link_col_idx)
+            cell.hyperlink = url
+            cell.style = "Hyperlink"
+
+    wb.save(INPUT_XLSX)
+    print(f"✅ Done. Added sheet '{OUTPUT_SHEET}' sorted by hyperlink domain from column {LINK_COLUMN}.")
+
+if __name__ == "__main__":
+    main()
